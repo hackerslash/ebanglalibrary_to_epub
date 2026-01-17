@@ -1,6 +1,6 @@
 # eBangla Library to EPUB/PDF Converter
 
-I wanted to read some books from [eBangla Library](https://www.ebanglalibrary.com/) on my Kindle, so I created this script to convert them to EPUB and PDF formats.
+I wanted to read some books from [eBangla Library](https://www.ebanglalibrary.com/) on my Kindle, so I created this script to convert them to EPUB and PDF formats. This takes a book URL from eBangla Library and converts it to EPUB or PDF format.
 
 ## Installation
 

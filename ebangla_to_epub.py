@@ -82,24 +82,41 @@ def extract_book_metadata(soup, url):
 
 
 def extract_chapter_links(soup, base_url):
-    """Extract all chapter links from the book page."""
     chapters = []
     
     post_container = soup.find('div', id=re.compile(r'learndash_post_\d+'))
     
     if post_container:
-        links = post_container.find_all('a', class_=re.compile(r'ld-item-name'))
+        all_links = post_container.find_all('a', href=True)
         
-        for link in links:
-            chapter_title = link.get_text(strip=True)
+        for link in all_links:
             chapter_url = link.get('href')
+            chapter_title = link.get_text(strip=True)
             
-            if chapter_url and chapter_title:
+            
+            if chapter_url and chapter_title and '/topics/' in chapter_url:
                 chapter_url = urljoin(base_url, chapter_url)
-                chapters.append({
-                    'title': chapter_title,
-                    'url': chapter_url
-                })
+                
+                if not any(ch['url'] == chapter_url for ch in chapters):
+                    chapters.append({
+                        'title': chapter_title,
+                        'url': chapter_url
+                    })
+        
+       
+        if not chapters:
+            links = post_container.find_all('a', class_=re.compile(r'ld-item-name'))
+            
+            for link in links:
+                chapter_title = link.get_text(strip=True)
+                chapter_url = link.get('href')
+                
+                if chapter_url and chapter_title:
+                    chapter_url = urljoin(base_url, chapter_url)
+                    chapters.append({
+                        'title': chapter_title,
+                        'url': chapter_url
+                    })
     
     return chapters
 

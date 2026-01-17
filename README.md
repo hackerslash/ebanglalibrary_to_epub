@@ -23,7 +23,7 @@ python ebangla_to_epub.py -o mybook.epub "https://www.ebanglalibrary.com/books/[
 ## What it does
 
 - Downloads book cover, intro content, and all chapters
-- Creates a properly formatted EPUB or PDF
+- Creates a properly formatted EPUB
 - Preserves Bengali text and formatting
 - Names the file using the book title
 

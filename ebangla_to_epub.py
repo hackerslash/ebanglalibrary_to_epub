@@ -39,8 +39,13 @@ def extract_book_metadata(soup, url):
         'acknowledgments': '',
         'intro_html': '',
         'cover_image_url': '',
-        'url': url
+        'url': url,
+        'filename_title': ''  # Title specifically for filename (from HTML <title> tag)
     }
+    
+    # Prioritize HTML <title> tag for filename (unless explicitly provided)
+    if soup.title and soup.title.string:
+        metadata['filename_title'] = soup.title.string.strip()
     
     tab_content = soup.find('div', id=re.compile(r'ld-tab-content-\d+'))
     
@@ -501,7 +506,9 @@ def main():
     if args.output:
         output_filename = args.output
     else:
-        safe_title = sanitize_filename(metadata['title'])
+        # Use HTML <title> tag for filename if available, otherwise fall back to metadata title
+        filename_title = metadata.get('filename_title') or metadata['title']
+        safe_title = sanitize_filename(filename_title)
         output_filename = f"{safe_title}.epub"
     
     print(f"\nCreating EPUB file...")

@@ -81,7 +81,83 @@ def extract_book_metadata(soup, url):
     return metadata
 
 
+def clean_html_for_epub(html):
+    """Clean HTML to make it XHTML-compliant for EPUB."""
+    # Replace self-closing tags with proper XHTML format
+    html = re.sub(r'<br\s*>', '<br/>', html)
+    html = re.sub(r'<hr\s*>', '<hr/>', html)
+    html = re.sub(r'<img([^>]*[^/])>', r'<img\1/>', html)
+    
+    # Remove any script or style tags
+    soup = BeautifulSoup(html, 'lxml')
+    for tag in soup.find_all(['script', 'style']):
+        tag.decompose()
+    
+    return str(soup)
+
+
+def extract_direct_content_chapters(soup):
+    """Extract chapters directly from the page (new structure)."""
+    chapters = []
+    
+    # Find the main article content
+    article = soup.find('article')
+    if not article:
+        return chapters
+    
+    # Find all h2 headings that mark chapters
+    headings = article.find_all('h2')
+    
+    # Check if this looks like the new structure (has chapter headings like "অধ্যায়")
+    has_chapter_headings = False
+    for heading in headings:
+        text = heading.get_text(strip=True)
+        if 'অধ্যায়' in text or text.startswith('Chapter') or text.startswith('অধ্যায়'):
+            has_chapter_headings = True
+            break
+    
+    # If no chapter headings found, this is likely old structure
+    if not has_chapter_headings:
+        return chapters
+    
+    for heading in headings:
+        chapter_title = heading.get_text(strip=True)
+        
+        # Skip headings that are not actual chapters
+        if not chapter_title or chapter_title in ['Book Information', 'সারাংশ', 'Reader Interactions']:
+            continue
+        
+        # Collect content until the next h2 or end of article
+        content_parts = []
+        current = heading.find_next_sibling()
+        
+        while current:
+            # Stop if we hit another h2 (next chapter)
+            if current.name == 'h2':
+                break
+            
+            # Add paragraph content
+            if current.name == 'p':
+                content_parts.append(str(current))
+            
+            current = current.find_next_sibling()
+        
+        if content_parts:
+            # Clean the HTML to make it XHTML-compliant
+            raw_content = '\n'.join(content_parts)
+            cleaned_content = clean_html_for_epub(raw_content)
+            
+            chapters.append({
+                'title': chapter_title,
+                'content': cleaned_content,
+                'type': 'direct'  # Mark as directly extracted
+            })
+    
+    return chapters
+
+
 def extract_chapter_links(soup, base_url):
+    """Extract chapter links (old structure)."""
     chapters = []
     
     post_container = soup.find('div', id=re.compile(r'learndash_post_\d+'))
@@ -100,7 +176,8 @@ def extract_chapter_links(soup, base_url):
                 if not any(ch['url'] == chapter_url for ch in chapters):
                     chapters.append({
                         'title': chapter_title,
-                        'url': chapter_url
+                        'url': chapter_url,
+                        'type': 'link'  # Mark as needing to fetch
                     })
         
        
@@ -115,7 +192,8 @@ def extract_chapter_links(soup, base_url):
                     chapter_url = urljoin(base_url, chapter_url)
                     chapters.append({
                         'title': chapter_title,
-                        'url': chapter_url
+                        'url': chapter_url,
+                        'type': 'link'
                     })
     
     return chapters
@@ -168,6 +246,18 @@ def download_cover_image(url):
     except requests.RequestException as e:
         print(f"  Warning: Could not download cover image: {e}")
         return None, None
+
+
+def escape_xml(text):
+    """Escape XML special characters."""
+    if not text:
+        return ''
+    return (text
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+            .replace("'", '&apos;'))
 
 
 def create_epub(metadata, chapters, output_filename):
@@ -229,7 +319,13 @@ def create_epub(metadata, chapters, output_filename):
     for i, chapter in enumerate(chapters):
         print(f"Processing chapter {i+1}/{len(chapters)}: {chapter['title']}")
         
-        content = extract_chapter_content(chapter['url'])
+        # Check if this is direct content or needs to be fetched
+        if chapter.get('type') == 'direct':
+            # Content already extracted
+            content = chapter.get('content', '')
+        else:
+            # Old structure - fetch from URL
+            content = extract_chapter_content(chapter['url'])
         
         if content:
             chapter_file = f'chapter_{i+1}.xhtml'
@@ -320,9 +416,18 @@ def main():
     if metadata['editors']:
         print(f"  Editors: {metadata['editors']}")
     
-    print("\nExtracting chapter links...")
-    chapters = extract_chapter_links(soup, book_url)
-    print(f"  Found {len(chapters)} chapters")
+    print("\nDetecting page structure...")
+    # Try new structure first (direct content)
+    chapters = extract_direct_content_chapters(soup)
+    
+    if chapters:
+        print(f"  ✓ Detected new page structure (direct content)")
+        print(f"  Found {len(chapters)} chapters")
+    else:
+        # Fall back to old structure (chapter links)
+        print(f"  Detected old page structure (topic links)")
+        chapters = extract_chapter_links(soup, book_url)
+        print(f"  Found {len(chapters)} chapters")
     
     if not chapters:
         print("Error: No chapters found on the page")

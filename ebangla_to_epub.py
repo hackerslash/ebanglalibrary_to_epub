@@ -20,6 +20,8 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from ebooklib import epub
+from io import BytesIO
+from PIL import Image
 
 
 def sanitize_filename(filename):
@@ -51,7 +53,9 @@ def extract_book_metadata(soup, url):
         for unwanted in tab_content_copy.find_all(['script', 'style']):
             unwanted.decompose()
         
-        metadata['intro_html'] = str(tab_content_copy.find('div', id=re.compile(r'ld-tab-content-\d+')))
+        intro_html_raw = str(tab_content_copy.find('div', id=re.compile(r'ld-tab-content-\d+')))
+        # Clean the HTML to remove problematic attributes
+        metadata['intro_html'] = clean_html_for_epub(intro_html_raw)
         
         text_content = tab_content.get_text(separator='\n', strip=True)
         lines = [line.strip() for line in text_content.split('\n') if line.strip()]
@@ -92,6 +96,19 @@ def clean_html_for_epub(html):
     soup = BeautifulSoup(html, 'lxml')
     for tag in soup.find_all(['script', 'style']):
         tag.decompose()
+    
+    # Remove aria-labelledby attributes that reference missing IDs
+    # This prevents EPUB validation errors
+    for tag in soup.find_all(attrs={'aria-labelledby': True}):
+        del tag['aria-labelledby']
+    
+    # Also remove other ARIA attributes that might reference missing IDs
+    for tag in soup.find_all(attrs={'aria-describedby': True}):
+        del tag['aria-describedby']
+    for tag in soup.find_all(attrs={'aria-controls': True}):
+        del tag['aria-controls']
+    for tag in soup.find_all(attrs={'aria-owns': True}):
+        del tag['aria-owns']
     
     return str(soup)
 
@@ -219,13 +236,14 @@ def extract_chapter_content(url):
         content_div = soup.find('div', class_=re.compile(r'ld-tab-content.*entry-content'))
     
     if content_div:
-        return str(content_div)
+        # Clean the HTML to remove problematic attributes
+        return clean_html_for_epub(str(content_div))
     
     return None
 
 
 def download_cover_image(url):
-    """Download cover image and return image data and extension."""
+    """Download cover image, validate it, and convert to JPEG format."""
     if not url:
         return None, None
     
@@ -233,16 +251,63 @@ def download_cover_image(url):
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         
-        if '.jpg' in url or '.jpeg' in url:
-            ext = 'jpg'
-        elif '.png' in url:
-            ext = 'png'
-        elif '.webp' in url:
-            ext = 'jpg'  # Convert webp to jpg for better compatibility
-        else:
-            ext = 'jpg'  # Default
+        # Check if we got actual image data
+        if not response.content or len(response.content) < 100:
+            print(f"  Warning: Cover image appears to be empty or too small")
+            return None, None
         
-        return response.content, ext
+        # Validate and convert image using PIL
+        try:
+            # Open image from bytes
+            img = Image.open(BytesIO(response.content))
+            
+            # Verify the image is valid (this doesn't consume the image)
+            img.verify()
+            
+            # Reopen the image since verify() may have consumed it
+            img = Image.open(BytesIO(response.content))
+            
+            # Convert RGBA to RGB if necessary (for PNG with transparency)
+            if img.mode in ('RGBA', 'LA'):
+                # Create a white background
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'RGBA':
+                    rgb_img.paste(img, mask=img.split()[-1])
+                else:  # LA mode
+                    rgb_img.paste(img.convert('RGB'))
+                img = rgb_img
+            elif img.mode == 'P':
+                # Palette mode - convert to RGBA first, then RGB
+                if 'transparency' in img.info:
+                    img = img.convert('RGBA')
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    rgb_img.paste(img, mask=img.split()[-1])
+                    img = rgb_img
+                else:
+                    img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Save as JPEG to BytesIO
+            output = BytesIO()
+            img.save(output, format='JPEG', quality=95, optimize=True)
+            jpeg_data = output.getvalue()
+            output.close()
+            
+            # Validate the JPEG data by trying to open it
+            test_img = Image.open(BytesIO(jpeg_data))
+            test_img.load()  # Force loading to catch any errors
+            test_img.close()
+            
+            if len(jpeg_data) < 100:
+                print(f"  Warning: Converted JPEG appears to be too small")
+                return None, None
+            
+            return jpeg_data, 'jpg'
+        except Exception as img_error:
+            print(f"  Warning: Could not process cover image: {img_error}")
+            return None, None
+            
     except requests.RequestException as e:
         print(f"  Warning: Could not download cover image: {e}")
         return None, None

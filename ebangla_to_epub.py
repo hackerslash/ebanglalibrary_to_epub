@@ -179,30 +179,70 @@ def extract_direct_content_chapters(soup):
 
 
 def extract_chapter_links(soup, base_url):
-    """Extract chapter links (old structure)."""
     chapters = []
     
     post_container = soup.find('div', id=re.compile(r'learndash_post_\d+'))
     
     if post_container:
-        all_links = post_container.find_all('a', href=True)
+        # First, find all lesson items to understand the structure
+        lesson_items = post_container.find_all('div', class_='ld-item-lesson-item')
         
-        for link in all_links:
-            chapter_url = link.get('href')
-            chapter_title = link.get_text(strip=True)
+        for lesson_item in lesson_items:
+            # Check if this lesson is expandable (has topics underneath)
+            is_expandable = 'ld-expandable' in lesson_item.get('class', [])
             
+            # Get the lesson's own link
+            lesson_link = lesson_item.find('a', class_='ld-item-name')
             
-            if chapter_url and chapter_title and '/topics/' in chapter_url:
-                chapter_url = urljoin(base_url, chapter_url)
+            if not is_expandable and lesson_link:
+                # This is a standalone lesson without topics - include it directly
+                lesson_url = lesson_link.get('href')
+                lesson_title = lesson_link.get_text(strip=True)
                 
-                if not any(ch['url'] == chapter_url for ch in chapters):
-                    chapters.append({
-                        'title': chapter_title,
-                        'url': chapter_url,
-                        'type': 'link'  # Mark as needing to fetch
-                    })
+                if lesson_url and lesson_title and '/lessons/' in lesson_url:
+                    lesson_url = urljoin(base_url, lesson_url)
+                    if not any(ch['url'] == lesson_url for ch in chapters):
+                        chapters.append({
+                            'title': lesson_title,
+                            'url': lesson_url,
+                            'type': 'link'
+                        })
+            elif is_expandable:
+                # This lesson has topics - extract topic links from within it
+                topic_links = lesson_item.find_all('a', href=True)
+                for link in topic_links:
+                    chapter_url = link.get('href')
+                    chapter_title = link.get_text(strip=True)
+                    
+                    if chapter_url and chapter_title and '/topics/' in chapter_url:
+                        chapter_url = urljoin(base_url, chapter_url)
+                        if not any(ch['url'] == chapter_url for ch in chapters):
+                            chapters.append({
+                                'title': chapter_title,
+                                'url': chapter_url,
+                                'type': 'link'
+                            })
         
-       
+        # Fallback: if no lesson items found, try the old approach
+        if not chapters:
+            all_links = post_container.find_all('a', href=True)
+            
+            for link in all_links:
+                chapter_url = link.get('href')
+                chapter_title = link.get_text(strip=True)
+                
+                # Accept both /topics/ and /lessons/ URLs
+                if chapter_url and chapter_title and ('/topics/' in chapter_url or '/lessons/' in chapter_url):
+                    chapter_url = urljoin(base_url, chapter_url)
+                    
+                    if not any(ch['url'] == chapter_url for ch in chapters):
+                        chapters.append({
+                            'title': chapter_title,
+                            'url': chapter_url,
+                            'type': 'link'
+                        })
+        
+        # Another fallback: try ld-item-name links
         if not chapters:
             links = post_container.find_all('a', class_=re.compile(r'ld-item-name'))
             

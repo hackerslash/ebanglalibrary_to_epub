@@ -429,10 +429,6 @@ def create_epub(metadata, chapters, output_filename):
         <head><title>{metadata['title']}</title></head>
         <body>
             {processed_intro_html}
-            <hr/>
-            <p style="text-align: center; font-size: 0.9em; margin-top: 2em;">
-                <em>This EPUB was created using <a href="https://github.com/hackerslash/ebanglalibrary_to_epub">eBangla Library to EPUB Converter</a></em>
-            </p>
         </body>
         </html>
         """
@@ -445,10 +441,6 @@ def create_epub(metadata, chapters, output_filename):
             {f'<h2>{metadata["subtitle"]}</h2>' if metadata['subtitle'] else ''}
             {f'<p>{metadata["editors"]}</p>' if metadata['editors'] else ''}
             {f'<p>{metadata["acknowledgments"]}</p>' if metadata['acknowledgments'] else ''}
-            <hr/>
-            <p style="text-align: center; font-size: 0.9em; margin-top: 2em;">
-                <em>This EPUB was created using <a href="https://github.com/hackerslash/ebanglalibrary_to_epub">eBangla Library to EPUB Converter</a></em>
-            </p>
         </body>
         </html>
         """

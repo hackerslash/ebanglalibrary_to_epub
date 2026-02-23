@@ -314,17 +314,8 @@ def extract_chapter_links(soup, base_url):
     return chapters
 
 
-def extract_chapter_content(url):
-    """Extract content from a chapter page."""
-    print(f"  Fetching chapter: {url}")
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        response.encoding = 'utf-8'
-    except requests.RequestException as e:
-        print(f"  Error fetching chapter: {e}")
-        return None
-    soup = BeautifulSoup(response.text, 'lxml')
+def extract_content_from_soup(soup):
+    """Extract chapter content HTML from a parsed chapter page soup."""
     toc_div = soup.find('div', id='ftwp-container-outer')
     content_div = soup.find('div', id='ftwp-postcontent')
     if toc_div and content_div:
@@ -342,6 +333,80 @@ def extract_chapter_content(url):
     if content_div:
         return clean_html_for_epub(str(content_div))
     return None
+
+
+def extract_chapter_content(url):
+    """Extract content from a chapter page."""
+    print(f"  Fetching chapter: {url}")
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+    except requests.RequestException as e:
+        print(f"  Error fetching chapter: {e}")
+        return None
+    soup = BeautifulSoup(response.text, 'lxml')
+    return extract_content_from_soup(soup)
+
+
+def get_next_lesson_url(soup):
+    """Extract the Next Lesson button URL from a chapter page, or None if absent."""
+    for div in soup.find_all('div', class_='ld-content-action'):
+        a_tag = div.find('a')
+        if a_tag:
+            next_span = a_tag.find('span', class_='ld-text')
+            if next_span and 'Next Lesson' in next_span.get_text():
+                return a_tag.get('href')
+    return None
+
+
+def find_continuation_chapters(last_chapter_url, known_urls):
+    """
+    Follow Next Lesson links starting from the last listed chapter to discover
+    any additional chapters not shown on the book's main page.
+    Returns a list of chapter dicts (title, url, type='direct', content).
+    """
+    additional = []
+    print("  Checking for continuation chapters beyond the listed ones...")
+
+    try:
+        response = requests.get(last_chapter_url, timeout=30)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+        current_soup = BeautifulSoup(response.text, 'lxml')
+    except requests.RequestException as e:
+        print(f"  Warning: Could not check last chapter for continuation: {e}")
+        return additional
+
+    while True:
+        next_url = get_next_lesson_url(current_soup)
+        if not next_url or next_url in known_urls:
+            break
+
+        known_urls.add(next_url)
+
+        try:
+            response = requests.get(next_url, timeout=30)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+            current_soup = BeautifulSoup(response.text, 'lxml')
+        except requests.RequestException as e:
+            print(f"  Warning: Could not fetch continuation chapter: {e}")
+            break
+
+        h1 = current_soup.find('h1')
+        title = h1.get_text(strip=True) if h1 else next_url
+        content = extract_content_from_soup(current_soup)
+
+        print(f"  Found continuation chapter: {title}")
+        additional.append({
+            'title': title,
+            'url': next_url,
+            'type': 'direct',
+            'content': content or ''
+        })
+
+    return additional
 
 
 def download_cover_image(url):
@@ -555,6 +620,12 @@ def main():
         print(f"  Detected old page structure (topic links)")
         chapters = extract_chapter_links(soup, book_url)
         print(f"  Found {len(chapters)} chapters")
+        if chapters:
+            known_urls = {ch['url'] for ch in chapters if 'url' in ch}
+            continuation = find_continuation_chapters(chapters[-1]['url'], known_urls)
+            if continuation:
+                chapters.extend(continuation)
+                print(f"  Total chapters including continuations: {len(chapters)}")
     if not chapters:
         print("Error: No chapters found on the page")
         sys.exit(1)
